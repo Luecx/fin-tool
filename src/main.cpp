@@ -17,6 +17,10 @@ namespace fs = filesystem;
 int main(int argc, char* argv[]) {
   argparse::ArgumentParser program("fin-tool");
 
+  argparse::ArgumentParser counts_cmd("counts");
+  counts_cmd.add_description("Get the count of positions in each file");
+  counts_cmd.add_argument("files").help("Files to read").remaining();
+
   argparse::ArgumentParser convert_cmd("convert");
   convert_cmd.add_description(
     "Convert between fen and fin files. Input and output type determined based on output file name (.fin or .fens). "
@@ -37,6 +41,7 @@ int main(int argc, char* argv[]) {
     .help("Temporary directory to write files into during shuffling");
   shuffle_cmd.add_argument("files").help("Files to shuffle").remaining();
 
+  program.add_subparser(counts_cmd);
   program.add_subparser(convert_cmd);
   program.add_subparser(combine_cmd);
   program.add_subparser(shuffle_cmd);
@@ -50,13 +55,40 @@ int main(int argc, char* argv[]) {
   }
 
   /**
+   * Counts
+   */
+  if (program.is_subcommand_used(counts_cmd)) {
+    auto inputs = counts_cmd.get<vector<string>>("files");
+
+    Header header {};
+
+    for (const auto& input : inputs) {
+      fs::path input_path(input);
+
+      if (!fs::exists(input_path)) {
+        cout << input_path << " does not exist, skipping!" << endl;
+        continue;
+      } else if (fs::is_directory(input_path)) {
+        cout << input_path << " is a directory, skipping!" << endl;
+        continue;
+      }
+
+      ifstream fin(input_path, ios::binary | ios::in);
+      fin.read((char*) &header, sizeof(Header));
+      fin.close();
+
+      cout << input_path << ": " << header.position_count << endl;
+    }
+  }
+  
+  /**
    * Convert files from fen -> fin or fin -> fen
    */
-  if (program.is_subcommand_used(convert_cmd)) {
+  else if (program.is_subcommand_used(convert_cmd)) {
     auto output_name = convert_cmd.get("--output");
     auto inputs      = convert_cmd.get<vector<string>>("files");
 
-    bool to_bin = (output_name.find(".fin") != string::npos);
+    bool to_bin = (output_name.find(".fin") != string::npos || output_name.find(".bin") != string::npos);
     bool to_fen = (output_name.find(".fens") != string::npos);
     fs::path output_path(output_name);
 
@@ -84,7 +116,7 @@ int main(int argc, char* argv[]) {
       ofstream fout(output_path, ios::binary | ios::in | ios::out);
       fout.seekp(sizeof(Header) + sizeof(Position) * out_header.position_count);
 
-      for (auto input : inputs) {
+      for (const auto& input : inputs) {
         fs::path input_path(input);
 
         if (!fs::exists(input_path)) {
@@ -125,10 +157,11 @@ int main(int argc, char* argv[]) {
       return EXIT_FAILURE;
     }
 
-    /**
-     * Combine fins together
-     */
-  } else if (program.is_subcommand_used(combine_cmd)) {
+  }
+  /**
+   * Combine fins together
+   */
+  else if (program.is_subcommand_used(combine_cmd)) {
     auto output_name = combine_cmd.get("--output");
     auto inputs      = combine_cmd.get<vector<string>>("files");
 
@@ -146,7 +179,7 @@ int main(int argc, char* argv[]) {
     ofstream fout(output_path, ios::binary | ios::out);
     fout.write((char*) &out_header, sizeof(Header));
 
-    for (auto input : inputs) {
+    for (const auto& input : inputs) {
       fs::path input_path(input);
 
       if (!fs::exists(input_path)) {
@@ -199,7 +232,7 @@ int main(int argc, char* argv[]) {
     }
 
     uint64_t total_positions = 0;
-    for (auto input : inputs) {
+    for (const auto& input : inputs) {
       fs::path input_path(input);
 
       Header in_header {};
@@ -223,7 +256,7 @@ int main(int argc, char* argv[]) {
       fs::path file_path = tmp_path / file_name;
       fs::create_directories(tmp_path);
 
-      tmp_files.emplace_back(make_tuple(file_path, ofstream {file_path, ios::binary | ios::out}, (uint64_t) 0));
+      tmp_files.emplace_back(file_path, ofstream {file_path, ios::binary | ios::out}, (uint64_t) 0);
       cout << "Created temporary file " << file_path << endl;
     }
 
@@ -236,7 +269,7 @@ int main(int argc, char* argv[]) {
     mt19937 gen(rd());
     uniform_int_distribution<> distrib(1, total_files);
 
-    for (auto input : inputs) {
+    for (const auto& input : inputs) {
       fs::path input_path(input);
 
       fstream fin(input_path, ios::binary | ios::in);
@@ -261,30 +294,6 @@ int main(int argc, char* argv[]) {
     for (auto& [_, fout, __] : tmp_files)
       fout.close();
 
-    for (auto& [file_path, _, count] : tmp_files) {
-      ifstream fin(file_path, ios::binary | ios::in);
-      fin.seekg(sizeof(Header));
-
-      cout << "Loading " << file_path << " into memory for shuffling. Position count: " << count << endl;
-
-      vector<Position> positions {};
-      positions.resize(count);
-
-      fin.read((char*) &positions[0], sizeof(Position) * count);
-      fin.close();
-      shuffle(positions.begin(), positions.end(), mt19937(random_device()()));
-
-      cout << "Loading + shuffling complete, writing back to disk." << endl;
-
-      Header header {};
-      header.position_count = count;
-
-      ofstream fout(file_path, ios::binary | ios::out);
-      fout.write((char*) &header, sizeof(Header));
-      fout.write((char*) &positions[0], sizeof(Position) * count);
-      fout.close();
-    }
-
     fs::path output_path(output_name);
     ofstream fout(output_path, ios::binary | ios::out);
 
@@ -298,18 +307,26 @@ int main(int argc, char* argv[]) {
       ifstream fin(file_path, ios::binary | ios::in);
       fin.seekg(sizeof(Header));
 
-      cout << "Copy position contents from " << file_path << endl;
+      cout << "Loading " << file_path << " into memory for shuffling. Position count: " << count << endl;
 
-      fout << fin.rdbuf();
+      vector<Position> positions {};
+      positions.resize(count);
+
+      fin.read((char*) &positions[0], sizeof(Position) * count);
       fin.close();
 
+      shuffle(positions.begin(), positions.end(), mt19937(random_device()()));
+
+      cout << "Loading + shuffling complete, writing back to disk." << endl;
+
+      fout.write((char*) &positions[0], sizeof(Position) * count);
       fs::remove(file_path);
 
-      cout << "Copying complete. Deleted temporary file" << endl;
+      cout << "Copying complete. Deleted temporary file " << file_path << endl;
     }
 
     fout.close();
-
-    cout << "Successfully shuffled " << inputs.size() << " file(s) into " << output_name << endl;
+    cout << "Successfully shuffled " << inputs.size() << " file(s) with " << total_positions << " position(s) into "
+         << output_name << endl;
   }
 }

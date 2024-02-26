@@ -43,6 +43,6 @@
 *.app
 
 # Project Specific
-
+.idea
 .vscode
 fin-tool
