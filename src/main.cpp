@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <tuple>
 #include <vector>
@@ -61,26 +62,30 @@ int main(int argc, char* argv[]) {
     auto inputs = counts_cmd.get<vector<string>>("files");
 
     Header header {};
+    uint64_t total = 0;
+
+    auto longest =
+      max_element(inputs.begin(), inputs.end(), [](const auto& a, const auto& b) { return a.size() < b.size(); });
+    auto max_size = longest->size();
 
     for (const auto& input : inputs) {
       fs::path input_path(input);
 
-      if (!fs::exists(input_path)) {
-        cout << input_path << " does not exist, skipping!" << endl;
+      if (!fs::exists(input_path) || fs::is_directory(input_path))
         continue;
-      } else if (fs::is_directory(input_path)) {
-        cout << input_path << " is a directory, skipping!" << endl;
-        continue;
-      }
 
       ifstream fin(input_path, ios::binary | ios::in);
       fin.read((char*) &header, sizeof(Header));
       fin.close();
 
-      cout << input_path << ": " << header.position_count << endl;
+      cout << setw(max_size) << input << " " << setw(12) << header.position_count << endl;
+      total += header.position_count;
     }
+
+    cout << setw(max_size) << "Total"
+         << " " << setw(12) << total << endl;
   }
-  
+
   /**
    * Convert files from fen -> fin or fin -> fen
    */
